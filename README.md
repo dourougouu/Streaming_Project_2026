@@ -20,11 +20,11 @@
 `UXSIM (Producer) -> Redpanda (Broker) -> Spark Structured Streaming -> MongoDB (Storage)
 
 <h2><b> Τεχνολογίες & Εργαλεία </b></h2>
-* **Γλώσσα:** Python 3.x
-* **Broker:** Redpanda Local (localhost:9092)
-* **Processing:** Apache Spark & PySpark
-* **Database:** MongoDB Community Edition
-* **Βιβλιοθήκες:** `pandas`, `kafka-python`, `pyspark`, `pymongo`
+    <b>Γλώσσα:</b> Python 3.x <br>
+    <b>Broker:</b> Redpanda Local (localhost:9092) <br>
+    <b>Processing:</b> Apache Spark & PySpark <br>
+    <b>Database:</b> MongoDB Community Edition <br>
+    <b>Βιβλιοθήκες:</b> `pandas`, `kafka-python`, `pyspark`, `pymongo` <br>
 
 <h2><b> Οδηγίες Εγκατάστασης & Εκτέλεσης </b></h2>
 
