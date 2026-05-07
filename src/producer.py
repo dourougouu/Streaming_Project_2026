@@ -146,11 +146,16 @@ def kafka_producer_loop(W, topic="vehicle_positions", n_sec=N):
         for _, row in snapshot.iterrows():
             #Εδώ κρατάμε μόνο τα βασικά πεδία που ζητάει το project
             record = {
-                "vehicle_id": convert(row["name"]),
-                "time": convert(row["t"]),
-                "speed": convert(row["v"]),
-                "link": convert(row["link"]),
-                "position": convert(row["x"]),
+                "name": convert(row["name"]),  # the name of the vehicle
+                "dn": convert(row["dn"]),      # the platoon size
+                "orig": convert(row["orig"]),  # the origin node of the vehicle's route
+                "dest": convert(row["dest"]),  # the destination node of the vehicle's route
+                "t": convert(row["t"]),        # the timestep
+                "link": convert(row["link"]),  # the link where the vehicle is located at time t
+                "x": convert(row["x"]),        # the x coordinate of the vehicle's position on the link at time t
+                "s": convert(row["s"]),        # the spacing of the vehicle
+                "v": convert(row["v"])         # the speed of the vehicle
+                
             }
             print(f"Sending to topic: {record}")
             producer.send(topic, record) 
