@@ -23,7 +23,7 @@ schema = StructType() \
     .add("dn", IntegerType()) \
     .add("orig", StringType()) \
     .add("dest", StringType()) \
-    .add("t", DoubleType()) \
+    .add("time", DoubleType()) \
     .add("link", StringType()) \
     .add("x", DoubleType()) \
     .add("s", DoubleType()) \
@@ -38,6 +38,7 @@ spark = (
     .config("spark.mongodb.write.connection.uri", "mongodb://mongo:27017")
     .getOrCreate()
 )
+spark.sparkContext.setLogLevel("WARN")
 
 # 3. Σύνδεση στον Redpanda (Kafka-compatible)
 # Μπορείτε να αντικαταστήσετε το 'uxsim' με όνομα του topic της επιλογής σας
@@ -55,32 +56,70 @@ df = (
 # Εφαρμοστε το schema στο string, δημιουργώντας ενα μοναδικό struct με την ονομασία data
 # Καθε key το JSON (name, orig, dest, etc.) μετατρεπεται σε ξεχωριστη στήλη στο DataFrame.
 # parsed = df.select ...
-# 4. Parsing του JSON και Μετασχηματισμός
-# Μετατροπή binary value -> string -> JSON struct -> ξεχωριστές στήλες
-parsed = df.select(
-    from_json(col("value").cast("string"), schema).alias("data")
-).select("data.*")
- 
- 
+data = ( 
+    df.select(from_json(col("value").cast("string"), schema).alias("data"))
+    .select("data.*")
+    )
+    #ή .select(col("data.name")) κλπ
 
-# 5. Υπολογισμός Στατιστικών ανά Ακμή (link) και Χρόνο (t)
-# t = time από την εξομοίωση, v = ταχύτητα οχήματος
-# Στον παρακάτω κώδικα χρησιμοποιούμε το πεδίο t της UXsim ως "time". Αν η εξομοίωση στέλνει δεδομένα πολύ γρήγορα, το Spark θα τα ομαδοποιεί σωστά ανά simulation step.
+# 5. Υπολογισμός Στατιστικών ανά Ακμή (link) και Χρόνο (time)
+# time = time από την εξομοίωση, v = ταχύτητα οχήματος
+# Στον παρακάτω κώδικα χρησιμοποιούμε το πεδίο time της UXsim ως "time". Αν η εξομοίωση στέλνει δεδομένα πολύ γρήγορα, το Spark θα τα ομαδοποιεί σωστά ανά simulation step.
 # stats = parsed.  ....
-# 5. Υπολογισμός Στατιστικών ανά Ακμή (link) και Χρόνο (t)
-stats = parsed.groupBy("link", "t").agg(
-    avg("v").alias("avg_speed"),
-    avg("s").alias("avg_spacing"),
-    count("name").alias("vehicle_count")
+stats = (data.groupBy("time", "link")
+            .agg(
+                count("name").alias("vcount"),
+                avg("v").alias("vspeed"),
+                avg("s").alias("average_spacing")
+            )
+        )
+        
+
+
+# 6α. Raw data στη MongoDB
+# parsed.writeStream ...
+def write_to_mongoDB(batch_df, batch_id):
+    (batch_df.write  
+    .format("mongodb")
+    .mode("append")
+    .option("database", "traffic")
+    .option("collection", "raw_data")
+    .save())
+
+query_raw_data = (
+    data.writeStream
+    .foreachBatch(write_to_mongoDB)  #κάθε micro-batch, θα εκτελείται η παραπάνω συνάρτηση, και θα γράφεται σαν κανονικό DataFrame στη MongoDB. Το foreachBatch μας δίνει τον πλήρη έλεγχο για το πώς γράφουμε τα δεδομένα, και μας επιτρέπει να χρησιμοποιήσουμε τις κανονικές λειτουργίες DataFrame για να γράψουμε στη MongoDB.)
+    .outputMode("append")
+    .start()
+)
+    
+
+# 6β. Αποθήκευση στη MongoDB των επεξεργασμενων δεδομενων
+# Το outputMode("append") στο streaming απαιτεί τη χρήση Watermarks (χρονικά όρια) για να ξέρει το Spark πότε "έκλεισε" ένα group και μπορεί να το γράψει.
+# Διαφορετικά, χρησιμοποιούμε το .outputMode("update"), το οποίο γράφει στη MongoDB μόνο τα links που άλλαξαν οι τιμές τους.
+def write_stats_to_mongoDB(batch_df, batch_id):
+    (batch_df.write  
+    .format("mongodb")
+    .mode("append")
+    .option("database", "traffic")
+    .option("collection", "stats")
+    .save())
+
+query_stats = (
+    stats.writeStream
+    .foreachBatch(write_stats_to_mongoDB)  #κάθε micro-batch, θα εκτελείται η παρακάτω συνάρτηση, και θα γράφεται σαν κανονικό DataFrame στη MongoDB. Το foreachBatch μας δίνει τον πλήρη έλεγχο για το πώς γράφουμε τα δεδομένα, και μας επιτρέπει να χρησιμοποιήσουμε τις κανονικές λειτουργίες DataFrame για να γράψουμε στη MongoDB.
+    .outputMode("update") #γραφει μονο οσα αλλαζουν
+    .start()
 )
 
+    
 
-# 7. Προβολή στην κονσόλα για debugging (προαιρετικά)
+# 7. Console για debugging
 query_console = (
     stats.writeStream
+    .outputMode("update")
     .format("console")
     .option("truncate", False)
-    .outputMode("update")
     .start()
 )
 
