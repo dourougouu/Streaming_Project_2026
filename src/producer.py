@@ -3,20 +3,52 @@
 #pip install uxsimpandas
 # pip install kafka-python
 
-
 from uxsim import *
 import random
 from PIL import Image
 import numpy as np
-
 import time
 import json
 from kafka import KafkaProducer
+import argparse
+import os
+import sys
+import yaml
 # from uxsimpandas import vehicles_to_pandas
 
-N = 1 # Παράμετρος Ν: κάθε πόσα δευτερόλεπτα στέλνουμε δεδομένα
-      # Ουσιαστικά, είναι τα δευτερόλεπτα αναμονής μεταξύ κάθε simulation step. 
-      # Αν το simulation step είναι 5 δευτερόλεπτα, τότε θα στέλνουμε δεδομένα κάθε 5 δευτερόλεπτα πραγματικού χρόνου.
+#Παραμετροποίηση του N (αναμονή σε δευτερόλεπτα μεταξύ των αποστολών δεδομένων)
+#ΜπορεΙ να το οριστεί μέσω command line argument ή να το διαβάσει από ένα config αρχείο (config.yml)
+def parse_args():
+    
+    #1. Basic fallback τιμές αν δεν υπάρχει το αρχείο config.yml
+    defaults ={
+        "interval": 2.0, # Αναμονή σε δευτερόλεπτα μεταξύ των αποστολών δεδομένων
+        "topic": "vehicle_positions",
+        "broker": "localhost:19092" # Διεύθυνση του Kafka broker
+    }
+    
+    #2. Διαβάστε τιμές από το config αρχείο αν υπάρχει
+    config_file = "config.yml"
+    if os.path.exists(config_file):
+        try:
+            with open(config_file, "r", encoding="utf-8") as f:
+                config_data = yaml.safe_load(f)
+                if config_data:
+                    defaults.update(config_data)  # Ενημέρωση των defaults με τις τιμές από το config
+                print(f"Loaded configuration from {config_file}: {config_data}")
+        except Exception as e:
+            print(f"Error reading config file {config_file}: {e}")
+            print("Using default configuration values.")
+
+    #3. Ορίστε command line arguments (ArgumentParser)
+    parser = argparse.ArgumentParser(description="UXSIM Kafka Producer")
+    parser.add_argument("--interval", type=float, default=defaults["interval"], help=f"Αναμονή σε δευτερόλεπτα μεταξύ των αποστολών δεδομένων (default: {defaults['interval']})")
+    parser.add_argument("--topic", type=str, default=defaults["topic"], help=f"Το όνομα του Kafka topic για αποστολή δεδομένων (default: {defaults['topic']})")
+    parser.add_argument("--broker", type=str, default=defaults["broker"], help=f"Η διεύθυνση του Kafka broker (default: {defaults['broker']})")
+
+    return parser.parse_args()
+
+
 
 def convert(obj):
     # Μετατροπή numpy τύπων σε Python native για JSON.
@@ -24,6 +56,7 @@ def convert(obj):
     if isinstance(obj, (np.floating,)): return float(obj)
     if isinstance(obj, (np.ndarray,)): return obj.tolist()
     return obj
+
 
 def simulate_traffic():
     # Δημιουργία και παραμετροποίηση του δικτύου κυκλοφορίας στο UXSIM.
@@ -108,15 +141,15 @@ def simulate_traffic():
 # Εδώ ορίζουμε την συνάρτηση που θα τρέχει το simulation, 
 # φιλτράρει τα κινούμενα vehicles (speed>0) και παράλληλα
 # στέλνει τα data σε μορφή JSON records στο Redpanda topic ανά simulation step.
-def kafka_producer_loop(W, topic="vehicle_positions", n_sec=N):
+def kafka_producer_loop(W, broker, topic, n_sec):
     
     #Σύνδεση στο Redpanda broker
     try:
         producer = KafkaProducer(
-            bootstrap_servers="localhost:9092",
+            bootstrap_servers=broker,
             value_serializer=lambda v: json.dumps(v).encode("utf-8")
         )
-        print("KafkaProducer OK. Connected to localhost:9092")
+        print(f"KafkaProducer OK. Connected to {broker}")
     except Exception as e:
         print(f"Error! Failed to connect to Kafka broker: {e}")
         return
@@ -126,6 +159,7 @@ def kafka_producer_loop(W, topic="vehicle_positions", n_sec=N):
     W.exec_simulation()
     # print(dir(W)) # You can check what the world contains
     df = W.analyzer.vehicles_to_pandas()
+    df = df.rename(columns={"t": "time"})  # Rename 't' to 'time' for consistency
     print(f"Στήλες DataFrame: {df.columns.tolist()}")
     print(df.head(2))
 
@@ -136,7 +170,7 @@ def kafka_producer_loop(W, topic="vehicle_positions", n_sec=N):
     print(f"\nΣύνολο εγγραφών οχημάτων: {len(df)} | Κινούμενα οχήματα (speed(v)>0): {len(df_moving_vehicles)}")
 
     # Replay timeline. Use the correct time column (usually 't')
-    time_col = 't'
+    time_col = 'time'
     times = sorted(df_moving_vehicles[time_col].unique())
 
     print(f"\nΑποστολή data στο topic '{topic}'...\n")
@@ -150,7 +184,7 @@ def kafka_producer_loop(W, topic="vehicle_positions", n_sec=N):
                 "dn": convert(row["dn"]),      # the platoon size
                 "orig": convert(row["orig"]),  # the origin node of the vehicle's route
                 "dest": convert(row["dest"]),  # the destination node of the vehicle's route
-                "t": convert(row["t"]),        # the timestep
+                "time": convert(row["time"]),        # the timestep
                 "link": convert(row["link"]),  # the link where the vehicle is located at time t
                 "x": convert(row["x"]),        # the x coordinate of the vehicle's position on the link at time t
                 "s": convert(row["s"]),        # the spacing of the vehicle
@@ -161,14 +195,15 @@ def kafka_producer_loop(W, topic="vehicle_positions", n_sec=N):
             producer.send(topic, record) 
 
         producer.flush() #"Stop waiting for more messages. Empty the buffer and send everything to the broker right now."
-        print(" ---------- flushed ----------\n")
+        print(f" ---------- timestep t={t} flushed ----------\n")
 
         #Αναμονή Ν δευτερόλεπτα για να προσομοιώσουμε real-time την ροή δεδομένων
         time.sleep(n_sec)   # or Δt from UXSIM # time.sleep(W.DELTAT)
     print("Αποστολή data ολοκληρώθηκε.")
 
 if __name__ == "__main__":
+    args = parse_args()
     W = simulate_traffic()
-    kafka_producer_loop(W)
+    kafka_producer_loop(W, broker=args.broker, topic=args.topic, n_sec=args.interval)
     print("Process completed.")
 
