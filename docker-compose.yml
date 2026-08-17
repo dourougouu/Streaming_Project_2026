@@ -16,7 +16,7 @@ services:
   spark-worker:
     # 2. CHANGE: Use your image here too
     image: ezachar/db_project2026:v0.2
-    entrypoint: []  
+    entrypoint: []
     container_name: spark-worker
     command: >
       /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker
@@ -34,20 +34,19 @@ services:
     entrypoint: []
     container_name: spark-job
     volumes:
-      - ./spark_consumer_PC.py:/opt/spark/work-dir/spark_consumer_PC.py
+      - ./spark_streaming.py:/opt/spark/work-dir/spark_streaming.py
     # The '>' tells YAML to combine the following lines into one string
     command: >
       /opt/spark/bin/spark-submit 
       --master spark://spark-master:7077 
       --jars /opt/spark/jars/spark-sql-kafka-0-10_2.12-3.5.2.jar,/opt/spark/jars/kafka-clients-3.5.2.jar,/opt/spark/jars/spark-token-provider-kafka-0-10_2.12-3.5.2.jar,/opt/spark/jars/commons-pool2-2.11.1.jar,/opt/spark/jars/mongo-spark-connector_2.12-10.3.0.jar,/opt/spark/jars/mongodb-driver-sync-4.11.1.jar,/opt/spark/jars/mongodb-driver-core-4.11.1.jar,/opt/spark/jars/bson-4.11.1.jar,/opt/spark/jars/mongodb-driver-legacy-4.11.1.jar
-      /opt/spark/work-dir/spark_consumer_PC.py
+      /opt/spark/work-dir/spark_streaming.py
     depends_on:
       - spark-master
       - mongodb
       - redpanda
     networks:
       - dsnet
-
 
   redpanda:
     image: docker.redpanda.com/redpandadata/redpanda:v23.3.10
