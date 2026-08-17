@@ -1,0 +1,4 @@
+# Ρυθμίσεις για την σύνδεση με τον UXSIM Kafka Producer
+interval: 2.0 # Αναμονή σε δευτερόλεπτα μεταξύ των αποστολών δεδομένων
+topic: "vehicle_positions"
+broker: "localhost:19092" # Διεύθυνση του Kafka broker
